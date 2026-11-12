@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1a1f">
+<title>500e SoC</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #0e1a1f; --card: #15262d; --fg: #e8f1f2; --muted: #8aa3a8;
+    --accent: #3ddc97; --warn: #ffb74d; --low: #ff5c5c; --line: #22383f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: max(16px, env(safe-area-inset-top)) 16px 24px;
+  }
+  header { width: 100%; max-width: 480px; display: flex; justify-content: space-between; align-items: center; }
+  h1 { font-size: 1.1rem; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  #status { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  #dot.on { background: var(--accent); } #dot.busy { background: var(--warn); } #dot.err { background: var(--low); }
+
+  .gauge { position: relative; width: min(78vw, 320px); aspect-ratio: 1; margin: 28px 0 8px; }
+  .gauge svg { width: 100%; height: 100%; transform: rotate(135deg); }
+  .gauge .track { stroke: var(--line); }
+  .gauge .bar { stroke: var(--accent); transition: stroke-dashoffset .8s ease, stroke .4s; }
+  .gauge .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #soc { font-size: clamp(3.5rem, 18vw, 5.5rem); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  #soc small { font-size: .4em; font-weight: 500; color: var(--muted); }
+  #updated { margin-top: 8px; font-size: .8rem; color: var(--muted); }
+
+  .grid { width: 100%; max-width: 480px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 12px; }
+  .tile { background: var(--card); border-radius: 12px; padding: 12px 14px; }
+  .tile .k { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .tile .v { font-size: 1.35rem; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  .actions { width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 12px; padding: 14px;
+    background: var(--accent); color: #062015; cursor: pointer;
+  }
+  button.secondary { background: var(--card); color: var(--fg); }
+  button:disabled { opacity: .45; cursor: default; }
+  label.row { display: flex; align-items: center; justify-content: space-between; background: var(--card); border-radius: 12px; padding: 12px 14px; font-size: .95rem; }
+  select { font: inherit; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+
+  details { width: 100%; max-width: 480px; margin-top: 16px; background: var(--card); border-radius: 12px; padding: 10px 14px; }
+  summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  #log { font-family: ui-monospace, Menlo, monospace; font-size: .72rem; white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto; color: #b8cfd3; margin-top: 8px; }
+  #msg { width: 100%; max-width: 480px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: #3a1f1f; color: #ffd2d2; font-size: .9rem; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fiat 500e · Batterie</h1>
+  <div id="status"><span id="dot"></span><span id="statusText">Déconnecté</span></div>
+</header>
+
+<div class="gauge">
+  <svg viewBox="0 0 200 200" aria-hidden="true">
+    <circle class="track" cx="100" cy="100" r="86" fill="none" stroke-width="14" stroke-linecap="round"
+            stroke-dasharray="405.3 540.4" />
+    <circle id="bar" class="bar" cx="100" cy="100" r="86" fill="none" stroke-width="14" stroke-linecap="round"
+            stroke-dasharray="405.3 540.4" stroke-dashoffset="405.3" />
+  </svg>
+  <div class="center">
+    <div id="soc">--<small>%</small></div>
+    <div id="updated">Aucune lecture</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="tile"><div class="k">Tension pack</div><div class="v" id="volt">--</div></div>
+  <div class="tile"><div class="k">Courant</div><div class="v" id="amp">--</div></div>
+  <div class="tile"><div class="k">Puissance</div><div class="v" id="kw">--</div></div>
+  <div class="tile"><div class="k">Temp. batterie</div><div class="v" id="temp">--</div></div>
+  <div class="tile"><div class="k">SoH</div><div class="v" id="soh">--</div></div>
+  <div class="tile"><div class="k">Batterie 12 V</div><div class="v" id="v12">--</div></div>
+</div>
+
+<div id="msg"></div>
+
+<div class="actions">
+  <button id="btnConnect">Connecter le dongle</button>
+  <button id="btnRead" class="secondary" disabled>Lire maintenant</button>
+  <label class="row">Rafraîchissement auto
+    <select id="interval">
+      <option value="0">Désactivé</option>
+      <option value="10">10 s</option>
+      <option value="30" selected>30 s</option>
+      <option value="60">1 min</option>
+    </select>
+  </label>
+  <label class="row">Garder l'écran allumé <input type="checkbox" id="wake"></label>
+</div>
+
+<details>
+  <summary>Journal OBD (diagnostic)</summary>
+  <div id="log"></div>
+</details>
+
+<script>
+'use strict';
+
+/* ------------------------------------------------------------------
+ * Paramètres OBD pour la Fiat 500e 2020+ (« Nuova 500 », 42 / 24 kWh)
+ * CAN 29 bits 500 kbit/s, BMS joignable en 18DA44F1 -> réponse 18DAF144
+ * Source : relevés communautaires (gist MrPoofy, fil ABRP 500e).
+ * ------------------------------------------------------------------ */
+const INIT = [
+  'ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAL',
+  'ATSP7',          // ISO 15765-4 CAN 29 bits / 500 kbit/s
+  'ATCAF1',         // formatage auto ISO-TP
+  'ATCP18',         // priorité 0x18
+  'ATSHDA44F1',     // en-tête -> BMS
+  'ATFCSH18DA44F1', // flow control vers le BMS
+  'ATFCSD300000',
+  'ATFCSM1',
+  'ATCRA18DAF144',  // ne garder que les réponses du BMS
+  'ATST64',         // timeout réponse ~400 ms
+];
+
+// Services BLE « UART » utilisés par les clones ELM327 (Veepeak : FFF0)
+const BLE_SERVICES = [
+  0xfff0, 0xffe0, 0x18f0,
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+];
+
+/* ---------------- Utilitaires UI ---------------- */
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+function log(line) {
+  const t = new Date().toLocaleTimeString('fr-FR');
+  logEl.textContent += `[${t}] ${line}\n`;
+  if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function setStatus(text, cls) {
+  $('statusText').textContent = text;
+  $('dot').className = cls || '';
+}
+function showMsg(text) {
+  const m = $('msg');
+  m.textContent = text || '';
+  m.style.display = text ? 'block' : 'none';
+}
+function setGauge(pct) {
+  const full = 405.3;
+  const p = Math.max(0, Math.min(100, pct));
+  const bar = $('bar');
+  bar.style.strokeDashoffset = full - (full * p) / 100;
+  bar.style.stroke = p < 15 ? 'var(--low)' : p < 30 ? 'var(--warn)' : 'var(--accent)';
+}
+function render(data) {
+  if (data.soc != null) {
+    $('soc').innerHTML = `${data.soc.toFixed(1)}<small>%</small>`;
+    setGauge(data.soc);
+  }
+  const fmt = (v, d, u) => (v == null || Number.isNaN(v) ? '--' : `${v.toFixed(d)} ${u}`);
+  $('volt').textContent = fmt(data.volt, 1, 'V');
+  $('amp').textContent = fmt(data.amp, 1, 'A');
+  $('kw').textContent = fmt(data.kw, 1, 'kW');
+  $('temp').textContent = fmt(data.temp, 0, '°C');
+  $('soh').textContent = fmt(data.soh, 1, '%');
+  $('v12').textContent = fmt(data.v12, 2, 'V');
+  if (data.ts) {
+    const d = new Date(data.ts);
+    $('updated').textContent = 'Lu à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+      + (Date.now() - data.ts > 3600e3 ? ' le ' + d.toLocaleDateString('fr-FR') : '');
+  }
+}
+
+/* ---------------- Couche ELM327 sur BLE ---------------- */
+class Elm {
+  constructor() { this.buf = ''; this.waiter = null; this.queue = Promise.resolve(); }
+
+  async connect() {
+    this.device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: BLE_SERVICES,
+    });
+    this.device.addEventListener('gattserverdisconnected', () => this.onDisconnect && this.onDisconnect());
+    log(`Appareil : ${this.device.name || '(sans nom)'}`);
+    const server = await this.device.gatt.connect();
+
+    // Cherche une caractéristique notify + une writable dans les services connus
+    let services = [];
+    for (const s of BLE_SERVICES) {
+      try { services.push(await server.getPrimaryService(s)); } catch (_) {}
+    }
+    if (!services.length) throw new Error("Aucun service série BLE trouvé sur cet appareil. Est-ce bien le Veepeak ?");
+    for (const svc of services) {
+      const chars = await svc.getCharacteristics();
+      for (const c of chars) {
+        if (!this.rx && (c.properties.notify || c.properties.indicate)) this.rx = c;
+        if (!this.tx && (c.properties.write || c.properties.writeWithoutResponse)) this.tx = c;
+      }
+      if (this.rx && this.tx) { log(`Service ${svc.uuid}`); break; }
+      this.rx = this.tx = null;
+    }
+    if (!this.rx || !this.tx) throw new Error('Caractéristiques RX/TX introuvables.');
+
+    this.rx.addEventListener('characteristicvaluechanged', (e) => {
+      this.buf += new TextDecoder().decode(e.target.value);
+      if (this.buf.includes('>') && this.waiter) {
+        const out = this.buf.slice(0, this.buf.indexOf('>'));
+        this.buf = this.buf.slice(this.buf.indexOf('>') + 1);
+        const w = this.waiter; this.waiter = null; w.resolve(out);
+      }
+    });
+    await this.rx.startNotifications();
+  }
+
+  async write(str) {
+    const bytes = new TextEncoder().encode(str);
+    for (let i = 0; i < bytes.length; i += 20) {
+      const chunk = bytes.slice(i, i + 20);
+      if (this.tx.properties.writeWithoutResponse) await this.tx.writeValueWithoutResponse(chunk);
+      else await this.tx.writeValueWithResponse(chunk);
+    }
+  }
+
+  // Envoie une commande et attend le prompt '>' (sérialisé)
+  send(cmd, timeout = 4000) {
+    const run = async () => {
+      this.buf = '';
+      const p = new Promise((resolve, reject) => {
+        this.waiter = { resolve };
+        setTimeout(() => {
+          if (this.waiter) { this.waiter = null; reject(new Error(`Timeout sur ${cmd}`)); }
+        }, timeout);
+      });
+      await this.write(cmd + '\r');
+      const raw = await p;
+      const clean = raw.replace(/\r/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+      log(`> ${cmd}\n${clean}`);
+      return clean;
+    };
+    const r = this.queue.then(run, run);
+    this.queue = r.catch(() => {});
+    return r;
+  }
+
+  disconnect() { try { this.device && this.device.gatt.disconnect(); } catch (_) {} }
+}
+
+/* Reconstitue la charge utile hexadécimale d'une réponse UDS (mono ou multi-trame) */
+function parseUds(resp, did) {
+  const lines = resp.toUpperCase().split('\n')
+    .map((l) => l.replace(/\s+/g, ''))
+    .filter((l) => l && !/^(SEARCHING|OK|BUSINIT|STOPPED)/.test(l));
+  if (lines.some((l) => /NODATA|ERROR|UNABLE|\?/.test(l))) return null;
+  let hex = '';
+  for (const l of lines) {
+    if (/^[0-9A-F]{3}$/.test(l)) continue;         // longueur totale multi-trame (ex. 00E)
+    hex += l.replace(/^[0-9A-F]:/, '');            // "0:62A010..." -> "62A010..."
+  }
+  const expect = '62' + did;
+  const i = hex.indexOf(expect);
+  if (i < 0) {
+    if (hex.startsWith('7F')) log(`Réponse négative UDS : ${hex}`);
+    return null;
+  }
+  const bytes = [];
+  for (let k = i; k + 1 < hex.length; k += 2) bytes.push(parseInt(hex.substr(k, 2), 16));
+  return bytes; // bytes[0]=0x62, [1..2]=DID, [3..]=données
+}
+
+/* ---------------- Logique application ---------------- */
+const elm = new Elm();
+let connected = false, timer = null, reading = false, wakeLock = null;
+
+async function initElm() {
+  setStatus('Initialisation…', 'busy');
+  for (const c of INIT) {
+    try {
+      await elm.send(c, c === 'ATZ' ? 6000 : 3000);
+      if (c === 'ATZ') await new Promise((r) => setTimeout(r, 800));
+    } catch (e) { log(`(ignoré) ${e.message}`); }
+  }
+}
+
+async function readDid(did) {
+  try { return parseUds(await elm.send('22' + did, 5000), did); }
+  catch (e) { log(e.message); return null; }
+}
+
+async function readAll() {
+  if (!connected || reading) return;
+  reading = true;
+  $('btnRead').disabled = true;
+  setStatus('Lecture…', 'busy');
+  const data = { ts: Date.now() };
+  try {
+    // SoC : 22A010 -> octet 5 / 255 * 100 (SoC « brut » BMS)
+    const s = await readDid('A010');
+    if (s && s.length > 5) data.soc = (s[5] / 255) * 100;
+
+    // Tension pack : 22A011 -> octets 7-8 / 10
+    const v = await readDid('A011');
+    if (v && v.length > 8) data.volt = ((v[7] << 8) | v[8]) / 10;
+
+    // Courant : 22A00A -> (octets 3-4 - 32768) / 20
+    const a = await readDid('A00A');
+    if (a && a.length > 4) data.amp = (((a[3] << 8) | a[4]) - 32768) / 20;
+
+    if (data.volt != null && data.amp != null) data.kw = (data.volt * data.amp) / 1000;
+
+    // Température : 22A009 -> octet 12 (signé)
+    const t = await readDid('A009');
+    if (t && t.length > 12) data.temp = t[12] >= 128 ? t[12] - 256 : t[12];
+
+    // SoH : 22A029 -> Ah résiduels / Ah nominaux
+    const h = await readDid('A029');
+    if (h && h.length > 9) {
+      const tot = ((h[6] << 8) | h[7]) / 10, res = ((h[8] << 8) | h[9]) / 10;
+      if (tot > 0) data.soh = (res / tot) * 100;
+    }
+
+    // Tension 12 V vue par le dongle
+    try {
+      const r = await elm.send('ATRV', 2000);
+      const m = r.match(/(\d+(\.\d+)?)V/i);
+      if (m) data.v12 = parseFloat(m[1]);
+    } catch (_) {}
+
+    if (data.soc == null) {
+      showMsg("Pas de réponse du BMS. Vérifiez que la voiture est allumée (contact / READY) et que le dongle est bien enfoncé.");
+      setStatus('Connecté (pas de données)', 'err');
+    } else {
+      showMsg('');
+      setStatus('Connecté', 'on');
+      render(data);
+      try { localStorage.setItem('last', JSON.stringify(data)); } catch (_) {}
+    }
+  } finally {
+    reading = false;
+    $('btnRead').disabled = !connected;
+  }
+}
+
+function schedule() {
+  clearInterval(timer);
+  const s = parseInt($('interval').value, 10);
+  if (connected && s > 0) timer = setInterval(readAll, s * 1000);
+  try { localStorage.setItem('interval', String(s)); } catch (_) {}
+}
+
+$('btnConnect').addEventListener('click', async () => {
+  showMsg('');
+  if (connected) { elm.disconnect(); return; }
+  if (!navigator.bluetooth) {
+    showMsg("Web Bluetooth n'est pas disponible dans ce navigateur. Utilisez Chrome (ou Edge) sur Android, ou Chrome sur ordinateur. Sur iPhone, utilisez le navigateur « Bluefy ».");
+    return;
+  }
+  try {
+    setStatus('Connexion…', 'busy');
+    await elm.connect();
+    connected = true;
+    $('btnConnect').textContent = 'Déconnecter';
+    $('btnConnect').classList.add('secondary');
+    await initElm();
+    await readAll();
+    schedule();
+  } catch (e) {
+    log('Erreur : ' + e.message);
+    if (e.name !== 'NotFoundError') showMsg('Connexion impossible : ' + e.message);
+    setStatus('Déconnecté', '');
+    elm.disconnect();
+  }
+});
+
+elm.onDisconnect = () => {
+  connected = false;
+  clearInterval(timer);
+  elm.rx = elm.tx = null;
+  $('btnConnect').textContent = 'Connecter le dongle';
+  $('btnConnect').classList.remove('secondary');
+  $('btnRead').disabled = true;
+  setStatus('Déconnecté', '');
+  log('Déconnecté');
+};
+
+$('btnRead').addEventListener('click', readAll);
+$('interval').addEventListener('change', schedule);
+
+async function requestWake() {
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {}
+}
+$('wake').addEventListener('change', async (e) => {
+  if (e.target.checked) await requestWake();
+  else if (wakeLock) { wakeLock.release(); wakeLock = null; }
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && $('wake').checked) requestWake();
+});
+
+// Restaure la dernière lecture et les préférences
+try {
+  const last = JSON.parse(localStorage.getItem('last') || 'null');
+  if (last) render(last);
+  const iv = localStorage.getItem('interval');
+  if (iv !== null) $('interval').value = iv;
+} catch (_) {}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
