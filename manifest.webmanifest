@@ -1,7 +1,7 @@
 {
-  "name": "Fiat 500e – Batterie",
-  "short_name": "500e SoC",
-  "description": "Lecture du SoC de la Fiat 500e via un dongle OBD BLE (ELM327)",
+  "name": "EV Batterie – OBD",
+  "short_name": "EV Batterie",
+  "description": "SoC et données batterie de votre voiture électrique via un dongle OBD BLE (ELM327)",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

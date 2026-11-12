@@ -1,28 +1,28 @@
-# 500e SoC — PWA
+# EV Batterie — PWA OBD universelle
 
-Lit l'état de charge (SoC) de la batterie d'une Fiat 500e 2020+ via un dongle OBD BLE type ELM327 (Veepeak OBDCheck BLE+).
+Lit le SoC et les données batterie d'une voiture électrique via un dongle OBD BLE type ELM327
+(testé : Veepeak OBDCheck BLE+ sur Fiat 500e 2021).
 
-## Mise en ligne (HTTPS obligatoire pour Web Bluetooth)
+## Fichiers
+index.html · app.js (interface) · elm.js (BLE + décodage ELM327) · formula.js (formules ABRP, sans eval)
+profiles.json (20 profils) · sw.js · manifest.webmanifest · icônes · licenses/
 
-Le plus simple : GitHub Pages.
-1. Crée un dépôt, envoie les 5 fichiers (`index.html`, `manifest.webmanifest`, `sw.js`, `icon-192.png`, `icon-512.png`).
-2. Settings → Pages → Branch `main` / root → Save.
-3. Ouvre `https://<toi>.github.io/<depot>/` dans **Chrome sur Android**, puis menu ⋮ → « Installer l'application ».
+## Mise en ligne
+HTTPS obligatoire (GitHub Pages, Netlify…). Ouvrir dans Chrome Android → ⋮ → Installer l'application.
+Test local : `python3 -m http.server 8000` → http://localhost:8000
 
-Alternative : Netlify Drop (glisser-déposer le dossier sur app.netlify.com/drop).
+## Profils
+Format ABRP (https://github.com/iternio/ev-obd-pids). Lettres : A = 1er octet après l'écho (ex. après 62 A0 10).
+Clés reconnues : soc, voltage, current, power, batt_temp, ext_temp, soh, soe, capacity, kwh_charged,
+odometer, speed, vehicle_reported_speed, is_charging, is_dcfc, is_parked. Les clés commençant par « _ »
+sont affichées telles quelles ; _cell_min_voltage / _cell_max_voltage donnent la tuile « cellules ».
+Ajouter un véhicule : bouton « Importer un profil JSON », ou ajouter une entrée dans profiles.json.
 
-Test local sur ordinateur : `python3 -m http.server 8000` puis http://localhost:8000 (localhost est autorisé sans HTTPS).
+Les profils autres que la Fiat 500e proviennent du dépôt communautaire d'ABRP, qui les dit lui-même
+partiellement obsolètes : à valider avec le mode découverte.
 
-## Utilisation
-1. Branche le dongle (prise OBD sous le volant, côté gauche), mets le contact / mode READY.
-2. **Ne pas** appairer le dongle dans les réglages Bluetooth du téléphone : la PWA s'y connecte directement.
-3. « Connecter le dongle » → choisis l'appareil (souvent « VEEPEAK » ou « OBDBLE »).
+## Licences
+Profils iternio/ev-obd-pids : Apache 2.0 (voir licenses/). Profil Fiat 500e : relevés communautaires.
 
-## Compatibilité navigateur
-- ✅ Chrome / Edge Android, Chrome / Edge ordinateur
-- ❌ Safari iOS et Firefox (pas de Web Bluetooth) — sur iPhone, utiliser l'app « Bluefy »
-
-## Détails techniques
-- CAN 29 bits 500 kbit/s (`ATSP7`), BMS : requête `18DA44F1`, réponse `18DAF144`
-- SoC : `22A010`, octet 5 ÷ 255 × 100 (SoC brut BMS : peut différer de 1–3 points de l'affichage du tableau de bord)
-- Tension `22A011`, courant `22A00A`, température `22A009`, SoH `22A029` (formules communautaires, à vérifier)
+## Compatibilité
+Chrome/Edge Android et ordinateur. iPhone : navigateur Bluefy. Pas de Safari ni Firefox (pas de Web Bluetooth).
