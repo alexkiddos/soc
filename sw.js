@@ -1,4 +1,4 @@
-const CACHE = 'soc500e-v1';
+const CACHE = 'soc500e-v2';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {

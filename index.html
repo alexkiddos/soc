@@ -195,35 +195,82 @@ class Elm {
       try { services.push(await server.getPrimaryService(s)); } catch (_) {}
     }
     if (!services.length) throw new Error("Aucun service série BLE trouvé sur cet appareil. Est-ce bien le Veepeak ?");
-    for (const svc of services) {
-      const chars = await svc.getCharacteristics();
-      for (const c of chars) {
-        if (!this.rx && (c.properties.notify || c.properties.indicate)) this.rx = c;
-        if (!this.tx && (c.properties.write || c.properties.writeWithoutResponse)) this.tx = c;
-      }
-      if (this.rx && this.tx) { log(`Service ${svc.uuid}`); break; }
-      this.rx = this.tx = null;
-    }
-    if (!this.rx || !this.tx) throw new Error('Caractéristiques RX/TX introuvables.');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const short = (u) => u.replace(/^0000(\w{4})-0000-1000-8000-00805f9b34fb$/i, '$1').toUpperCase();
+    const props = (c) => Object.entries({
+      R: c.properties.read, W: c.properties.write, Wnr: c.properties.writeWithoutResponse,
+      N: c.properties.notify, I: c.properties.indicate,
+    }).filter(([, v]) => v).map(([k]) => k).join('/');
 
-    this.rx.addEventListener('characteristicvaluechanged', (e) => {
+    const onData = (e) => {
       this.buf += new TextDecoder().decode(e.target.value);
       if (this.buf.includes('>') && this.waiter) {
         const out = this.buf.slice(0, this.buf.indexOf('>'));
         this.buf = this.buf.slice(this.buf.indexOf('>') + 1);
         const w = this.waiter; this.waiter = null; w.resolve(out);
       }
-    });
-    await this.rx.startNotifications();
+    };
+
+    await sleep(500); // Android : laisser la pile GATT se stabiliser
+    for (const svc of services) {
+      const chars = await svc.getCharacteristics();
+      log(`Service ${short(svc.uuid)} : ` + chars.map((c) => `${short(c.uuid)}[${props(c)}]`).join(' '));
+
+      // RX : on essaie chaque caractéristique notify/indicate (FFF1 / FFE1 en priorité)
+      const rxCands = chars.filter((c) => c.properties.notify || c.properties.indicate)
+        .sort((a, b) => /fff1|ffe1/i.test(b.uuid) - /fff1|ffe1/i.test(a.uuid));
+      for (const c of rxCands) {
+        for (let attempt = 1; attempt <= 2 && !this.rx; attempt++) {
+          try {
+            c.addEventListener('characteristicvaluechanged', onData);
+            await c.startNotifications();
+            this.rx = c;
+            log(`RX = ${short(c.uuid)}`);
+          } catch (e) {
+            c.removeEventListener('characteristicvaluechanged', onData);
+            log(`Notifications refusées sur ${short(c.uuid)} (essai ${attempt}) : ${e.message}`);
+            await sleep(400);
+          }
+        }
+        if (this.rx) break;
+      }
+      if (!this.rx) continue;
+
+      // TX : FFF2 / FFE1 en priorité, puis n'importe quelle caractéristique inscriptible
+      this.txCands = chars.filter((c) => c.properties.write || c.properties.writeWithoutResponse)
+        .sort((a, b) => /fff2|ffe1/i.test(b.uuid) - /fff2|ffe1/i.test(a.uuid));
+      if (this.txCands.length) break;
+      this.rx = null;
+    }
+    if (!this.rx || !this.txCands || !this.txCands.length) throw new Error('Caractéristiques RX/TX utilisables introuvables (voir journal).');
+    this.tx = this.txCands[0];
+    this.writeMode = null; // déterminé à la première écriture
+  }
+
+  // Écrit en testant les modes (sans/avec réponse) et les caractéristiques candidates
+  async writeChunk(chunk) {
+    if (this.writeMode) return this.writeMode(chunk);
+    const errors = [];
+    for (const c of this.txCands) {
+      const modes = [];
+      if (c.properties.writeWithoutResponse) modes.push(['sans réponse', (d) => c.writeValueWithoutResponse(d)]);
+      if (c.properties.write) modes.push(['avec réponse', (d) => c.writeValueWithResponse(d)]);
+      modes.push(['legacy', (d) => c.writeValue(d)]);
+      for (const [name, fn] of modes) {
+        try {
+          await fn(chunk);
+          this.tx = c; this.writeMode = fn;
+          log(`TX = ${c.uuid.slice(4, 8).toUpperCase()} (${name})`);
+          return;
+        } catch (e) { errors.push(`${c.uuid.slice(4, 8)} ${name}: ${e.message}`); }
+      }
+    }
+    throw new Error('Écriture impossible — ' + errors.join(' | '));
   }
 
   async write(str) {
     const bytes = new TextEncoder().encode(str);
-    for (let i = 0; i < bytes.length; i += 20) {
-      const chunk = bytes.slice(i, i + 20);
-      if (this.tx.properties.writeWithoutResponse) await this.tx.writeValueWithoutResponse(chunk);
-      else await this.tx.writeValueWithResponse(chunk);
-    }
+    for (let i = 0; i < bytes.length; i += 20) await this.writeChunk(bytes.slice(i, i + 20));
   }
 
   // Envoie une commande et attend le prompt '>' (sérialisé)
@@ -379,7 +426,7 @@ $('btnConnect').addEventListener('click', async () => {
 elm.onDisconnect = () => {
   connected = false;
   clearInterval(timer);
-  elm.rx = elm.tx = null;
+  elm.rx = elm.tx = elm.txCands = elm.writeMode = null;
   $('btnConnect').textContent = 'Connecter le dongle';
   $('btnConnect').classList.remove('secondary');
   $('btnRead').disabled = true;
